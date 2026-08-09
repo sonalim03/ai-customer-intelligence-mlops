@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install ruff
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      # Fast, deterministic tests — no Ollama server needed. These run on
+      # every push/PR and must pass; a broken scorer or guardrail is a
+      # real regression, same as any other broken unit test.
+      - name: Fast unit tests (guardrails, scorer, API layer)
+        run: |
+          pytest agent/test_guardrails.py -v
+          pytest evals/test_scorer.py -v
+          pytest api/test_main.py -v
+
+  # Runs a REAL local Ollama server in the CI runner and evaluates the
+  # agent against it — only on push to main (not every PR), since pulling
+  # a model and running real inference is slow (several minutes) compared
+  # to the fast unit tests above. This is the CI job that actually proves
+  # the agent works end-to-end, not just that its pieces are wired up.
+  live-evals-ollama:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama server
+        run: |
+          ollama serve &
+          # Wait for the server to actually accept connections before
+          # moving on — a fixed sleep is flaky, polling is not.
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:11434/api/tags > /dev/null; then
+              echo "Ollama is up"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Pull model
+        run: ollama pull llama3.2:3b
+
+      - name: Seed data (GitHub-hosted runners have full internet access, unlike this dev sandbox)
+        run: |
+          python data/db.py
+          python scripts/ingest_stock_data.py
+          python scripts/seed_portfolio.py
+          python scripts/ingest_news.py
+          python scripts/train_risk_model.py
+
+      - name: Run live agent evals
+        run: python evals/run_evals.py --threshold 0.7
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build-only check (no push) — catches a broken Dockerfile or a
+      # requirements.txt problem before it reaches main.
+      - name: Build Docker image
+        run: docker build -t finsight:ci .

@@ -1,0 +1,17 @@
+venv/
+venv_d/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.env
+data/*.db
+data/chroma/
+logs/
+evals/results.json
+.DS_Store
+Thumbs.db
+!.env.example

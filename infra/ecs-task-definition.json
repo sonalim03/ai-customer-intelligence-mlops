@@ -1,0 +1,59 @@
+{
+  "family": "finsight-api",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/finsight-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/finsight-ecs-task-role",
+  "volumes": [
+    {
+      "name": "finsight-data",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "<EFS_FILE_SYSTEM_ID>",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": {
+          "accessPointId": "<EFS_ACCESS_POINT_ID>",
+          "iam": "ENABLED"
+        }
+      }
+    }
+  ],
+  "containerDefinitions": [
+    {
+      "name": "finsight-api",
+      "image": "<ACCOUNT_ID>.dkr.ecr.us-east-1.amazonaws.com/finsight:latest",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8000, "protocol": "tcp" }
+      ],
+      "mountPoints": [
+        { "sourceVolume": "finsight-data", "containerPath": "/app/data" }
+      ],
+      "environment": [
+        { "name": "LLM_PROVIDER", "value": "bedrock" },
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "BEDROCK_MODEL_ID", "value": "anthropic.claude-3-5-sonnet-20241022-v2:0" }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)\" || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 15
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/finsight-api",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "finsight"
+        }
+      }
+    }
+  ]
+}
+
